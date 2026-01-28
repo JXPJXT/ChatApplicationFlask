@@ -15,10 +15,13 @@ app = Flask(__name__)
 socketio = SocketIO(app, async_mode="eventlet")
 
 PORT = int(os.environ.get("PORT", 5000))
-MONGO_URI = os.environ["MONGO_URI"]
+MONGO_URI = os.environ.get("MONGO_URI")
+
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI environment variable not set")
 
 # ─────────────────────────────────────────────
-# MongoDB setup
+# MongoDB setup (NO DB ACTIONS YET)
 # ─────────────────────────────────────────────
 
 client = MongoClient(MONGO_URI)
@@ -26,9 +29,6 @@ db = client.chatdb
 
 users_col = db.users
 messages_col = db.messages
-
-users_col.create_index("username", unique=True)
-messages_col.create_index("created_at")
 
 # ─────────────────────────────────────────────
 # In-memory hot cache (O(1))
@@ -41,8 +41,12 @@ message_index = {}
 active_users = {}   # sid → user info
 
 # ─────────────────────────────────────────────
-# Load recent messages at startup
+# Safe DB initialization
 # ─────────────────────────────────────────────
+
+def init_db():
+    users_col.create_index("username", unique=True)
+    messages_col.create_index("created_at")
 
 def load_recent_messages():
     cursor = (
@@ -149,5 +153,6 @@ def send_message(data):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
+    init_db()
     load_recent_messages()
     socketio.run(app, host="0.0.0.0", port=PORT)

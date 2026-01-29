@@ -2,7 +2,6 @@ import os
 import uuid
 from datetime import datetime
 from collections import deque
-import certifi
 
 from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -20,12 +19,8 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI not set")
 
 # Mongo
-# tlsAllowInvalidCertificates=True helps with Render/Atlas handshake issues on some images
-client = AsyncIOMotorClient(
-    MONGO_URI,
-    tlsCAFile=certifi.where(),
-    tlsAllowInvalidCertificates=True
-)
+# Using system certs with permissive validation
+client = AsyncIOMotorClient(MONGO_URI, tlsAllowInvalidCertificates=True)
 db = client.chatdb
 users_col = db.users
 messages_col = db.messages

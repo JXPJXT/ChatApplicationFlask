@@ -19,8 +19,9 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI not set")
 
 # Mongo
-# Using system certs with permissive validation
-client = AsyncIOMotorClient(MONGO_URI, tlsAllowInvalidCertificates=True)
+# Mongo
+# Using lazy connection (no forced TLS, no startup ping) to avoid Render timeouts
+client = AsyncIOMotorClient(MONGO_URI)
 db = client.chatdb
 users_col = db.users
 messages_col = db.messages
@@ -33,14 +34,18 @@ active_connections = {}
 # Startup
 @app.on_event("startup")
 async def startup():
-    await client.admin.command("ping")
-    await users_col.create_index("username", unique=True)
-    await messages_col.create_index("created_at")
-
-    cursor = messages_col.find({}).sort("created_at", -1).limit(MAX_CACHE)
-    msgs = [msg async for msg in cursor]
-    for msg in reversed(msgs):
-        message_cache.append(msg)
+    try:
+        # Do NOT ping here; let connection be lazy
+        await users_col.create_index("username", unique=True)
+        await messages_col.create_index("created_at")
+        
+        # Pre-load cache carefully
+        cursor = messages_col.find({}).sort("created_at", -1).limit(MAX_CACHE)
+        msgs = [msg async for msg in cursor]
+        for msg in reversed(msgs):
+            message_cache.append(msg)
+    except Exception as e:
+        print(f"Warning: DB initialization skipped/failed: {e}")
 
 # Routes
 @app.get("/", response_class=HTMLResponse)

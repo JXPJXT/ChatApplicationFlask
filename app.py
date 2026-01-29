@@ -20,7 +20,7 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI not set")
 
 # Mongo
-client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
+client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where(), tls=True)
 db = client.chatdb
 users_col = db.users
 messages_col = db.messages

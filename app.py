@@ -123,7 +123,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             await messages_col.insert_one(msg)
             message_cache.append(msg)
 
-            for ws in active_connections.values():
+            for ws in list(active_connections.values()):
                 await ws.send_json(msg)
 
     except WebSocketDisconnect:

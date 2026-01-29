@@ -192,9 +192,11 @@
             <div class="input-group">
                 <input type="password" name="password" placeholder=">> Authentication Code" required>
             </div>
-        <button type="submit">Initialize Link</button>
+            <button type="submit">Initialize Link</button>
             <div style="margin-top: 15px; text-align: center;">
-                <a href="{{ url_for('signup') }}" style="color: var(--text-secondary); text-decoration: none; font-family: var(--font-mono); font-size: 0.8rem; text-transform: uppercase;">>> Establish New Identity</a>
+                <a href="{{ url_for('signup_page') }}"
+                    style="color: var(--text-secondary); text-decoration: none; font-family: var(--font-mono); font-size: 0.8rem; text-transform: uppercase;">>>
+                    Establish New Identity</a>
             </div>
         </form>
     </div>

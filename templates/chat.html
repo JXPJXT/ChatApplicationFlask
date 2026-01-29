@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Link // {{ display_name }}</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+    <!-- Socket.IO removed -->
     <style>
         :root {
             --bg-color: #050505;
@@ -228,8 +228,8 @@
     <div id="chat-container">
         <div id="messages">
             {% for msg in messages %}
-            <div class="message {{ 'own' if msg.sender_id == session.user_id else 'other' }}">
-                <span class="meta">{{ msg.sender_name }} // {{ msg.time }}</span>
+            <div class="message {{ 'own' if msg.sender_id == user_id else 'other' }}">
+                <span class="meta">{{ msg.sender_name }} // {{ msg.created_at }}</span>
                 {{ msg.content }}
             </div>
             {% endfor %}
@@ -243,60 +243,49 @@
     </div>
 
     <script>
-        const socket = new WebSocket(
-            `wss://${location.host}/ws/{{ user_id }}`
-        );
+        const userId = "{{ user_id }}";
+        const displayName = "{{ display_name }}";
+
+        const messagesDiv = document.getElementById("messages");
+        const input = document.getElementById("message-input");
+
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        const socket = new WebSocket(`${protocol}://${location.host}/ws/${userId}`);
 
         socket.onmessage = (event) => {
             const msg = JSON.parse(event.data);
-            // render message
+
+            const div = document.createElement("div");
+            const isOwn = msg.sender_id === userId;
+
+            div.className = `message ${isOwn ? "own" : "other"}`;
+            div.innerHTML = `
+            <span class="meta">${msg.sender_name} // ${new Date(msg.created_at).toLocaleTimeString()}</span>
+            ${msg.content}
+        `;
+
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         };
 
         function sendMessage() {
-            socket.send(JSON.stringify({
-                content: input.value,
-                sender_name: "{{ display_name }}"
-            }));
-        }
-
-        const messagesDiv = document.getElementById('messages');
-        const input = document.getElementById('message-input');
-
-        // Scroll to bottom
-        function scrollToBottom() {
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-        scrollToBottom();
-
-        socket.on('new_message', function (msg) {
-            const div = document.createElement('div');
-            // Check if own message
-            const isOwn = msg.sender_id === "{{ session.user_id }}";
-            div.className = `message ${isOwn ? "own" : "other"}`;
-
-            div.innerHTML = `
-                <span class="meta">${msg.sender_name} // ${msg.time}</span>
-                ${msg.content}
-            `;
-            messagesDiv.appendChild(div);
-            scrollToBottom();
-        });
-
-        function sendMessage() {
             const content = input.value.trim();
-            if (content) {
-                socket.emit('send_message', { content: content });
-                input.value = '';
-                input.focus();
-            }
+            if (!content || socket.readyState !== WebSocket.OPEN) return;
+
+            socket.send(JSON.stringify({
+                content: content,
+                sender_name: displayName
+            }));
+
+            input.value = "";
+            input.focus();
         }
 
-        input.addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
+        input.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") sendMessage();
         });
     </script>
+
 </body>
 
 </html>

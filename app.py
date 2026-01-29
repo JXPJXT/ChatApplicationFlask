@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime
 from collections import deque
-from pymongo.server_api import ServerApi
+import certifi
 
 from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -20,7 +20,12 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI not set")
 
 # Mongo
-client = AsyncIOMotorClient(MONGO_URI, server_api=ServerApi('1'))
+# tlsAllowInvalidCertificates=True helps with Render/Atlas handshake issues on some images
+client = AsyncIOMotorClient(
+    MONGO_URI,
+    tlsCAFile=certifi.where(),
+    tlsAllowInvalidCertificates=True
+)
 db = client.chatdb
 users_col = db.users
 messages_col = db.messages

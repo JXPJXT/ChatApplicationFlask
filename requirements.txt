@@ -1,9 +1,10 @@
 fastapi
 uvicorn[standard]
 motor
-jinja2
-python-multipart
-werkzeug
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt
+python-dotenv
+pydantic[email]
 dnspython
 certifi
-

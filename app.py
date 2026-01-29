@@ -1,8 +1,8 @@
 import os
 import uuid
-import certifi
 from datetime import datetime
 from collections import deque
+from pymongo.server_api import ServerApi
 
 from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -20,7 +20,7 @@ if not MONGO_URI:
     raise RuntimeError("MONGO_URI not set")
 
 # Mongo
-client = AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where(), tls=True)
+client = AsyncIOMotorClient(MONGO_URI, server_api=ServerApi('1'))
 db = client.chatdb
 users_col = db.users
 messages_col = db.messages

@@ -1,6 +1,7 @@
-flask
-flask-socketio
-eventlet
-pymongo
-gunicorn
+fastapi
+uvicorn[standard]
+motor
+jinja2
+python-multipart
 werkzeug
+certifi

@@ -1,54 +1,64 @@
-from flask import Flask, render_template, request, redirect, url_for
-from flask_socketio import SocketIO, emit
-from werkzeug.security import generate_password_hash, check_password_hash
-from collections import deque
-from datetime import datetime
-from pymongo import MongoClient
-import uuid
 import os
+import uuid
+import certifi
+from datetime import datetime
+from collections import deque
+
+from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+
+from motor.motor_asyncio import AsyncIOMotorClient
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # ─────────────────────────────────────────────
 # App setup
 # ─────────────────────────────────────────────
 
-app = Flask(__name__)
-socketio = SocketIO(app, async_mode="eventlet")
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
-PORT = int(os.environ.get("PORT", 5000))
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+PORT = int(os.environ.get("PORT", 8000))
 MONGO_URI = os.environ.get("MONGO_URI")
 
 if not MONGO_URI:
-    raise RuntimeError("MONGO_URI environment variable not set")
+    raise RuntimeError("MONGO_URI not set")
 
 # ─────────────────────────────────────────────
-# MongoDB setup (NO DB ACTIONS YET)
+# MongoDB (Motor + TLS)
 # ─────────────────────────────────────────────
 
-client = MongoClient(MONGO_URI)
+client = AsyncIOMotorClient(
+    MONGO_URI,
+    tlsCAFile=certifi.where()
+)
+
 db = client.chatdb
-
 users_col = db.users
 messages_col = db.messages
 
 # ─────────────────────────────────────────────
-# In-memory hot cache (O(1))
+# In-memory cache
 # ─────────────────────────────────────────────
 
 MAX_CACHE = 100
 message_cache = deque(maxlen=MAX_CACHE)
-message_index = {}
 
-active_users = {}   # sid → user info
+active_connections = {}
 
 # ─────────────────────────────────────────────
-# Safe DB initialization
+# Startup
 # ─────────────────────────────────────────────
 
-def init_db():
-    users_col.create_index("username", unique=True)
-    messages_col.create_index("created_at")
+@app.on_event("startup")
+async def startup():
+    await client.admin.command("ping")
+    await users_col.create_index("username", unique=True)
+    await messages_col.create_index("created_at")
 
-def load_recent_messages():
     cursor = (
         messages_col
         .find({})
@@ -56,103 +66,104 @@ def load_recent_messages():
         .limit(MAX_CACHE)
     )
 
-    for msg in reversed(list(cursor)):
-        msg["_id"] = str(msg["_id"])
+    msgs = []
+    async for msg in cursor:
+        msgs.append(msg)
+
+    for msg in reversed(msgs):
         message_cache.append(msg)
-        message_index[msg["_id"]] = msg
 
 # ─────────────────────────────────────────────
 # Routes
 # ─────────────────────────────────────────────
 
-@app.route('/')
-def index():
-    return redirect(url_for('login'))
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return RedirectResponse("/login")
 
-@app.route('/signup', methods=['GET', 'POST'])
-def signup():
-    if request.method == 'POST':
-        try:
-            users_col.insert_one({
-                "user_id": str(uuid.uuid4()),
-                "username": request.form['username'].lower(),
-                "password_hash": generate_password_hash(request.form['password']),
-                "display_name": request.form['display_name']
-            })
-            return redirect(url_for('login'))
-        except:
-            return render_template("signup.html", error="Username exists")
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
-    return render_template("signup.html")
+@app.post("/login")
+async def login(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...)
+):
+    user = await users_col.find_one({"username": username.lower()})
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        user = users_col.find_one({
-            "username": request.form['username'].lower()
+    if not user or not check_password_hash(user["password_hash"], password):
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "error": "Invalid username or password"}
+        )
+
+    return templates.TemplateResponse(
+        "chat.html",
+        {
+            "request": request,
+            "user_id": user["user_id"],
+            "display_name": user["display_name"],
+            "messages": list(message_cache)
+        }
+    )
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_page(request: Request):
+    return templates.TemplateResponse("signup.html", {"request": request})
+
+@app.post("/signup")
+async def signup(
+    request: Request,
+    username: str = Form(...),
+    display_name: str = Form(...),
+    password: str = Form(...)
+):
+    try:
+        await users_col.insert_one({
+            "user_id": str(uuid.uuid4()),
+            "username": username.lower(),
+            "display_name": display_name,
+            "password_hash": generate_password_hash(password)
         })
-
-        if user and check_password_hash(user["password_hash"], request.form['password']):
-            return render_template(
-                "chat.html",
-                user_id=user["user_id"],
-                display_name=user["display_name"],
-                messages=list(message_cache)
-            )
-
-        return render_template("login.html", error="Invalid credentials")
-
-    return render_template("login.html")
+        return RedirectResponse("/login", status_code=302)
+    except:
+        return templates.TemplateResponse(
+            "signup.html",
+            {"request": request, "error": "Username already exists"}
+        )
 
 # ─────────────────────────────────────────────
-# Socket.IO
+# WebSocket Chat
 # ─────────────────────────────────────────────
 
-@socketio.on("register_user")
-def register_user(data):
-    active_users[request.sid] = {
-        "user_id": data["user_id"],
-        "display_name": data["display_name"]
-    }
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await websocket.accept()
+    active_connections[user_id] = websocket
 
-@socketio.on("disconnect")
-def disconnect():
-    active_users.pop(request.sid, None)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            content = data["content"].strip()
 
-@socketio.on("send_message")
-def send_message(data):
-    user = active_users.get(request.sid)
-    if not user:
-        return
+            msg = {
+                "sender_id": user_id,
+                "sender_name": data["sender_name"],
+                "content": content,
+                "created_at": datetime.utcnow().isoformat()
+            }
 
-    msg_id = str(uuid.uuid4())
-    now = datetime.utcnow().isoformat()
+            await messages_col.insert_one(msg)
 
-    msg = {
-        "_id": msg_id,
-        "sender_id": user["user_id"],
-        "sender_name": user["display_name"],
-        "content": data["content"].strip(),
-        "created_at": now
-    }
+            if len(message_cache) == MAX_CACHE:
+                message_cache.popleft()
 
-    # Persist
-    messages_col.insert_one(msg)
+            message_cache.append(msg)
 
-    # Cache
-    if len(message_cache) == message_cache.maxlen:
-        message_index.pop(message_cache[0]["_id"], None)
+            for ws in active_connections.values():
+                await ws.send_json(msg)
 
-    message_cache.append(msg)
-    message_index[msg_id] = msg
-
-    emit("new_message", msg, broadcast=True)
-
-# ─────────────────────────────────────────────
-# Boot
-# ─────────────────────────────────────────────
-
-if __name__ == "__main__":
-    init_db()
-    load_recent_messages()
-    socketio.run(app, host="0.0.0.0", port=PORT)
+    except WebSocketDisconnect:
+        active_connections.pop(user_id, None)

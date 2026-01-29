@@ -243,7 +243,21 @@
     </div>
 
     <script>
-        const socket = io();
+        const socket = new WebSocket(
+            `wss://${location.host}/ws/{{ user_id }}`
+        );
+
+        socket.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            // render message
+        };
+
+        function sendMessage() {
+            socket.send(JSON.stringify({
+                content: input.value,
+                sender_name: "{{ display_name }}"
+            }));
+        }
 
         const messagesDiv = document.getElementById('messages');
         const input = document.getElementById('message-input');
